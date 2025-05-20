@@ -1,0 +1,90 @@
+import streamlit as st
+import requests
+
+# ========================
+# CONFIGURATION
+# ========================
+API_KEY = "your_api_key_here"  # Replace with your RentCast API key
+
+# ========================
+# UI CONFIG
+# ========================
+st.set_page_config(page_title="ARV Estimator", layout="centered")
+st.title("🏡 Real Estate ARV Estimator")
+
+# ========================
+# USER INPUT
+# ========================
+address = st.text_input("Full Property Address (e.g., 123 Main St, Dallas, TX 75201)")
+square_feet = st.number_input("Square Footage", min_value=100, step=50)
+
+damage_type = st.selectbox(
+    "Damage Severity",
+    [
+        "None",
+        "Cosmetic (paint, flooring)",
+        "Moderate (kitchen/bath update)",
+        "Heavy (roof, HVAC, foundation)"
+    ]
+)
+
+damage_adjustments = {
+    "None": 0.00,
+    "Cosmetic (paint, flooring)": 0.10,
+    "Moderate (kitchen/bath update)": 0.20,
+    "Heavy (roof, HVAC, foundation)": 0.35
+}
+
+# ========================
+# ESTIMATE BUTTON
+# ========================
+if st.button("Estimate ARV"):
+    if not address:
+        st.error("⚠️ Please enter a full address.")
+    else:
+        headers = {"Authorization": f"Bearer {API_KEY}"}
+        params = {"address": address}
+
+        response = requests.get("https://api.rentcast.io/v1/avm/value", headers=headers, params=params)
+        data = response.json()
+
+        price_per_sqft = data.get("pricePerSqft")
+        est_price = data.get("price")
+
+        if response.status_code == 200 and price_per_sqft and est_price:
+            base_value = price_per_sqft * square_feet
+            damage_deduction = base_value * damage_adjustments[damage_type]
+            final_value = base_value - damage_deduction
+
+            st.success(f"💰 Estimated ARV: ${final_value:,.2f}")
+            st.caption(f"{square_feet} sqft × ${price_per_sqft:.2f}/sqft")
+            st.caption(f"Adjustment: -{int(damage_adjustments[damage_type]*100)}% for {damage_type.lower()}")
+
+            if data.get("priceRangeLow") and data.get("priceRangeHigh"):
+                st.write(f"RentCast Range: ${data['priceRangeLow']:,.0f} – ${data['priceRangeHigh']:,.0f}")
+
+        else:
+            st.warning("⚠️ Address not found. Trying ZIP fallback...")
+
+            try:
+                zip_code = address.strip().split()[-1]
+                zip_resp = requests.get(
+                    "https://api.rentcast.io/v1/markets/zip",
+                    headers=headers,
+                    params={"zip": zip_code}
+                )
+                zip_data = zip_resp.json()
+                fallback_ppsf = zip_data.get("avgPricePerSqft")
+
+                if fallback_ppsf:
+                    base_value = fallback_ppsf * square_feet
+                    damage_deduction = base_value * damage_adjustments[damage_type]
+                    fallback_arv = base_value - damage_deduction
+
+                    st.success(f"📊 ZIP-Based ARV Estimate: ${fallback_arv:,.2f}")
+                    st.caption(f"ZIP Avg: ${fallback_ppsf:.2f}/sqft × {square_feet} sqft")
+                else:
+                    st.error("❌ Could not estimate value from ZIP code either.")
+
+            except Exception as e:
+                st.error("❌ Error getting ZIP-based data.")
